@@ -53,9 +53,13 @@ fi
 # artemis 在 drive_c\FGOA-Server\ → 服务器找 drive_c\App 和 drive_c\Server\data\fgo-master，
 # 数据实际在 drive_c\FGOA\ 下 → 符号链接补齐。永久组成部分，勿删。
 ln -sfn FGOA/App "$BOTTLE/drive_c/App"
+# drive_c\DEVICE：服务端 _load_card_catalog 用 normpath(join(app_root, CardsPath))
+# 词法折叠 drive_c/App/../DEVICE → drive_c/DEVICE，不经过 App 链接 → 必须单独补，
+# 否则 call_up 从者卡全部判 invalid（0.35 根因）。
+ln -sfn FGOA/DEVICE "$BOTTLE/drive_c/DEVICE"
 mkdir -p "$BOTTLE/drive_c/Server/data"
 ln -sfn ../../FGOA/Server/data/fgo-master "$BOTTLE/drive_c/Server/data/fgo-master"
-echo "符号链接已就绪: drive_c\App、drive_c\Server\data\fgo-master"
+echo "符号链接已就绪: drive_c\App、drive_c\DEVICE、drive_c\Server\data\fgo-master"
 mkdir -p "$SRV/state" "$SRV/logs"
 
 echo "==> [2/6] 准备 MariaDB ${MARIA_VER} Linux 版"

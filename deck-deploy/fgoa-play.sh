@@ -12,8 +12,10 @@ bash "$DIR/fgoa-server-start.sh" || {
 rm -rf /tmp/glshim   # glshim 现默认开启；stubbed.txt/loaded.txt 是追加模式，每轮清空
 bash "$DIR/fgo-launch-deck.sh" || true
 
-# 游戏退出后自动打包本轮日志（也可随时手动跑 fgoa-collect-logs.sh）
-bash "$DIR/fgoa-collect-logs.sh"
+# 游戏退出后打包本轮日志：默认关闭，FGOA_COLLECT_LOGS=1 时启用（也可随时手动跑 fgoa-collect-logs.sh）
+if [ "${FGOA_COLLECT_LOGS:-0}" = "1" ]; then
+  bash "$DIR/fgoa-collect-logs.sh"
+fi
 
 echo
 echo "===== 游戏已退出，正在停止服务器 ====="

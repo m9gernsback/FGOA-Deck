@@ -7,6 +7,14 @@
 
 **✅ 已结案（2026-09-21 午后）：Deck 成功进入标题画面。** 4102 根因 = soda-11.0-10 的 bcrypt 编译时缺 ECC secret 派生（`Compiled without ECC secret support`），amdipc ECK1 密钥协商在 `BCryptDeriveKey(HASH)` 必败 → Messenger 卡 state 2 → 推送被门死 → 对称死锁。修复 = ipcdump v7 内置 cngfix（钩 SecretAgreement/DeriveKey 合成派生密钥），Deck 部署 v7 双 dll 后一局进标题。**注意：cngfix 是永久必需品——Deck 上的 `drive_c/FGOA/ipcdump.dll` 和 `drive_c/FGOA/App/am/wlanapi.dll` 不能删**（删了就回到 4102）。
 
+## 0.35 第三十七轮（2026-09-21 晚，✅ 已结案：刷卡能读礼装但从者卡不显示——call_up 硬依赖 catalog，反斜杠 CardsPath 在 Linux 必败）
+
+- **现象**：刷卡成功音、validator accepted=5，礼装（CE）正常显示，3 张从者卡不显示
+- **根因链**：carddeck 每次保存把 deck.json `CardsPath` 写成反斜杠 `..\DEVICE\...` → Linux 服务端 `_load_card_catalog()` 的 `normpath(join(app_root, CardsPath))` 不识别反斜杠 → catalog 恒空 → `call_up` 中从者卡必须命中 `installed_servant_cards`（catalog），空表 → tc_id 全部进 `invalid_tid_list` → 客户端当不可读卡不显示；CE 卡走 trc 主表（TrcTypeId≠1）不查 catalog，所以幸存
+- **纠正 0.33 误判**：该"遗留"并非"仅影响打印卡资格"，它直接打断 call_up 从者显示
+- **修复（方案 2，不动服务端代码）**：① deck.json `CardsPath` 改正斜杠 `../DEVICE/print/FGO11_AllServants`（`SelectedCards` 保持反斜杠——客户端 DLL 按 `\` 解析）；② Deck 补符号链接 `drive_c/DEVICE -> FGOA/DEVICE`（normpath 词法折叠 `App/..` 不经过 App 链接，必须单独补，已固化进 fgoa-deck-setup.sh）；③ carddeck/server.py 拆 `CARDS_PATH_POSIX`（写 CardsPath）/ `CARDS_PATH_WIN`（写 SelectedCards）防回退
+- **注意**：`_load_card_catalog` 无缓存、每请求重读，改 deck.json 后无需重启 ARTEMiS 即生效
+
 ## 0.34 第三十六轮（2026-09-21 午后，✅ 已结案：radeonsi 开 Mesa 磁盘缓存同样闪退——缓存 bug 与后端无关，永久禁用）
 
 - **实验**：`MESA_SHADER_CACHE_DISABLE=false`（缓存开启）+ radeonsi 跑两局 → 第二局（温缓存）闪退

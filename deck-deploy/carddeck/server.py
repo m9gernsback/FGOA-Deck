@@ -30,7 +30,10 @@ PORT = int(os.environ.get("FGOA_PORT", "8931"))
 
 CARD_DIR = FGOA_ROOT / "DEVICE/print/FGO11_AllServants"
 DECK_JSON = FGOA_ROOT / "App/deck.json"
-CARDS_PATH_WIN = r"..\DEVICE\print\FGO11_AllServants"  # deck.json 里的 Windows 相对路径
+CARDS_PATH_WIN = r"..\DEVICE\print\FGO11_AllServants"  # SelectedCards 前缀（Windows 客户端 DLL 按反斜杠解析，勿改）
+# CardsPath 用正斜杠：服务端在 Linux 下 normpath(join(app_root, CardsPath)) 不识别反斜杠，
+# 反斜杠会导致 catalog 加载失败、call_up 从者卡全判 invalid（0.35 根因）。
+CARDS_PATH_POSIX = "../DEVICE/print/FGO11_AllServants"
 
 MAX_CARDS = 5
 MAX_COPIES = 3
@@ -79,7 +82,7 @@ def write_deck(cards: list) -> dict:
     payload = {
         "SelectedCards": [f"{CARDS_PATH_WIN}\\{fn}" for fn in files],
         "SelectedCardCopies": copies,
-        "CardsPath": CARDS_PATH_WIN,
+        "CardsPath": CARDS_PATH_POSIX,
     }
     if DECK_JSON.exists():
         shutil.copy2(DECK_JSON, DECK_JSON.with_suffix(".json.bak"))
