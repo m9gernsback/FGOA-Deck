@@ -37,7 +37,7 @@
 |---|---|
 | `FGOA\App`、`FGOA\AMFS`、`FGOA\DEVICE`、`FGOA\GameData` | `~/.var/app/com.usebottles.bottles/data/bottles/bottles/FGOA/drive_c/FGOA/` 下 |
 | `FGOA\Server` 整个目录 | `~/.var/app/com.usebottles.bottles/data/bottles/bottles/FGOA/drive_c/FGOA-Server/`（即 `FGOA-Server/artemis`、`FGOA-Server/data` …） |
-| `deck-deploy\*.sh` 五个脚本 + `*.desktop` 四个启动器 + `carddeck\` 目录（卡组编辑器） | `~/Desktop/FGOA/`（桌面新建 FGOA 文件夹，全部放一起，carddeck 整目录拷入） |
+| `deck-deploy\` 里的**全部内容**：`*.sh` 脚本 + `*.desktop` 启动器 + `carddeck\` 目录（卡组编辑器）+ **补丁文件** `fgoapifix.dll`、`fgoglcompat.dll`、`ipcdump.dll`、`wlanapi.dll`、`glshim.so`（作用见 §2 表格） | `~/Desktop/FGOA/`（桌面新建 FGOA 文件夹，全部放一起，carddeck 整目录拷入；补丁文件与脚本同目录即可，setup 会自动装入 bottle） |
 
 > Server 目录里的 `venv/`、`python/`、`mariadb-10.11.16-winx64/` 是 Windows 专用，可不复制（复制了也无害）。
 > 服务器放在 bottle 的 drive_c 里只是为了集中管理——它跑的是 Linux 原生进程，与 Wine 沙箱无关。
@@ -52,6 +52,18 @@ bash ~/Desktop/FGOA/fgoa-deck-setup.sh
 ```
 
 脚本自动完成：
+- **安装补丁文件到 bottle**（源文件在脚本同目录，缺哪个会打印警告）：
+
+  | 文件 | 装入位置 | 作用 | 缺失后果 |
+  |---|---|---|---|
+  | `fgoapifix.dll` | `drive_c/FGOA/` | Wine API 补丁（补 ago.exe 静态导入的 `SetWindowFeedbackSetting`） | 触摸初始化时崩溃（0x80000100） |
+  | `fgoglcompat.dll` | `drive_c/FGOA/App/` | NV bindless→SSBO 翻译层（ago.exe 无条件调用 NV 专属 GL 入口） | 画面缺失 |
+  | `glshim.so` | `drive_c/FGOA/` | GL shim：embedded-struct 改写（12 个 shader 编译通过的必要条件）+ 崩溃现场记录 | 12 个 shader 编译失败 |
+  | `ipcdump.dll` | `drive_c/FGOA/` | **cngfix 载体**：修复 soda bcrypt 缺 ECC secret 派生（4102 根因） | amdipc 密钥协商死锁 = 4102 |
+  | `wlanapi.dll` | `drive_c/FGOA/App/am/` | amdaemon 侧 cngfix 载体（应用目录 shadow） | 同上 = 4102 |
+  | 符号链接 ×2 | `drive_c/App → FGOA/App`、`drive_c/Server/data/fgo-master → ../../FGOA/Server/data/fgo-master` | ARTEMiS 的 app_root 写死上溯 4 层，数据实际在 `FGOA\` 下 | 服务器读不到数据，刷卡报错 |
+
+  **以上全部是永久运行组成部分，装好后勿删。**
 - 准备 MariaDB 10.11.19 Linux 版到 `FGOA-Server/mariadb-linux/`（与 Windows 版同属 10.11 系列，数据库文件直接复用玩家数据，patch 版本完全兼容）。
   **优先使用本地 tarball**：若脚本同目录（或 `FGOA-Server/`、`/tmp`）下存在 `mariadb-10.11.19-linux-systemd-x86_64.tar.gz` 则直接解压，否则才从清华镜像下载（约 341MB）。`deck-deploy/` 里已附带该 tarball，随脚本一起拷到 Deck 即可全程离线。
 - 写 MariaDB 配置（端口 8888）
@@ -126,6 +138,8 @@ SERVER_LOGLEVEL=debug bash ~/Desktop/FGOA/fgoa-server-start.sh   # ARTEMiS 恢�
 | 现象 | 看什么 |
 |---|---|
 | 服务器起不来 | `FGOA-Server/logs/artemis-stderr.log`（在 bottle 的 drive_c 下）；若报 `drive_c/logs/db.log` 不存在，执行 `mkdir -p .../FGOA/drive_c/logs`（新版 start 脚本已自动处理） |
+| 起游戏卡在黑屏/报 4102 | 检查 cngfix 载体在不在：`drive_c/FGOA/ipcdump.dll` + `drive_c/FGOA/App/am/wlanapi.dll`，缺了重跑 `fgoa-deck-setup.sh`（它会自动补装并建符号链接） |
+| 刷卡登录弹通信错误 | 检查符号链接：`ls -l drive_c/App drive_c/Server/data/fgo-master` 应指向 FGOA 下；重建同上一行 |
 | 注入失败 / DLL failed to load | bottle 内 `drive_c/FGOA/logs/deck-inject-live.log` 前几行 |
 | 游戏崩溃 | 同一日志末尾；崩溃 dump 在 `drive_c/FGOA/logs/ago-crash-*.dmp` |
 | GL 扩展缺失（`bindless ... not supported`） | 先 `GL_BACKEND=zink` 兜底；仍报缺说明 bottle 运行时 Mesa 太旧，在 Bottles 里更新 |

@@ -35,6 +35,27 @@ if [ -f "$SCRIPT_DIR/fgoglcompat.dll" ]; then
 else
   echo "警告: 未找到 fgoglcompat.dll（AMD 兼容补丁，缺失时 NV 指针着色器无法翻译）"
 fi
+# ipcdump.dll（amdipc 报文转储 + cngfix：修复 soda bcrypt 缺 ECC secret 派生=4102 根因）：永久必需
+if [ -f "$SCRIPT_DIR/ipcdump.dll" ]; then
+  cp "$SCRIPT_DIR/ipcdump.dll" "$BOTTLE/drive_c/FGOA/ipcdump.dll"
+  echo "ipcdump.dll 已安装到 C:\FGOA\\"
+else
+  echo "警告: 未找到 ipcdump.dll（cngfix 载体，缺失则 amdipc ECK1 密钥协商死锁=4102）"
+fi
+# wlanapi.dll（amdaemon 侧 cngfix 载体，App\am\ 应用目录 shadow）：永久必需
+if [ -f "$SCRIPT_DIR/wlanapi.dll" ]; then
+  cp "$SCRIPT_DIR/wlanapi.dll" "$BOTTLE/drive_c/FGOA/App/am/wlanapi.dll"
+  echo "wlanapi.dll 已安装到 C:\FGOA\App\am\\"
+else
+  echo "警告: 未找到 wlanapi.dll（amdaemon 侧 cngfix 载体，缺失=4102）"
+fi
+# 数据符号链接（4102 收尾 0.31）：ARTEMiS 的 app_root 写死为包上溯 4 层+App，
+# artemis 在 drive_c\FGOA-Server\ → 服务器找 drive_c\App 和 drive_c\Server\data\fgo-master，
+# 数据实际在 drive_c\FGOA\ 下 → 符号链接补齐。永久组成部分，勿删。
+ln -sfn FGOA/App "$BOTTLE/drive_c/App"
+mkdir -p "$BOTTLE/drive_c/Server/data"
+ln -sfn ../../FGOA/Server/data/fgo-master "$BOTTLE/drive_c/Server/data/fgo-master"
+echo "符号链接已就绪: drive_c\App、drive_c\Server\data\fgo-master"
 mkdir -p "$SRV/state" "$SRV/logs"
 
 echo "==> [2/6] 准备 MariaDB ${MARIA_VER} Linux 版"
