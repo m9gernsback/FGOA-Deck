@@ -83,6 +83,23 @@ if changed:
     p.write_text(t, encoding="utf-8")
     print("[server] 已修补 billing TLS context（PROTOCOL_TLS_SERVER + TLS1.0 放行）")
 EOF
+# 日志降噪（2026-09-21）：ARTEMiS 出厂一片 loglevel: debug，单会话 fgo.log+aimedb.log 约 1MB
+# 且追加式累积。启动前幂等压到 info；SERVER_LOGLEVEL=debug 可整体还原排查。
+# 注意：ARTEMiS 数据扫描缓存进进程内存（文档 0.33），改配置必须重启服务器进程才生效。
+python3 - "$SRV/artemis/config" "${SERVER_LOGLEVEL:-info}" <<'EOF'
+import re, sys
+from pathlib import Path
+cfg, lvl = Path(sys.argv[1]), sys.argv[2]
+for name in ("core.yaml", "fgo.yaml"):
+    p = cfg / name
+    if not p.exists():
+        continue
+    t = p.read_text(encoding="utf-8")
+    t2 = re.sub(r'(loglevel:\s*)"?[a-z]+"?', lambda m: m.group(1) + lvl, t)
+    if t2 != t:
+        p.write_text(t2, encoding="utf-8")
+        print(f"[server] {name}: loglevel 统一设为 {lvl}（已在运行的服务器需重启生效）")
+EOF
 # 修复二：openssl-legacy.cnf（MinProtocol=TLSv1 + SECLEVEL=0）。注：实测此 cnf 对 python
 # 进程不生效（TLS1.3-only 反证），TLS1.0 放行靠上面修复三的 wrapper 直接改 context；
 # cnf 保留仅供 openssl CLI 探针等外部工具使用（顶层 openssl_conf 指令必须有，否则整个文件被静默忽略）。

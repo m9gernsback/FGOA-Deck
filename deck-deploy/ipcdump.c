@@ -202,6 +202,15 @@ static void log_line(const char *fmt, ...)
     char *o = line;
     va_list ap;
     DWORD written;
+    /* v8: IPCDUMP_QUIET=1 安静模式——只放行 cngfix 日志（4102 修复链的存活证据），
+     * 报文转储/句柄事件全静默。cngfix.h 所有日志均以 "cngfix" 前缀开头。 */
+    static int g_quiet = -1;
+    if (g_quiet < 0) {
+        char ev[8];
+        g_quiet = (GetEnvironmentVariableA("IPCDUMP_QUIET", ev, sizeof(ev)) > 0 && ev[0] == '1');
+    }
+    if (g_quiet && strncmp(fmt, "cngfix", 6) != 0)
+        return;
     o += sprintf(o, "[%lu] pid=%lu tid=%lu ", GetTickCount(),
                  GetCurrentProcessId(), GetCurrentThreadId());
     va_start(ap, fmt);

@@ -6,7 +6,12 @@
 #                            zink = GL→Vulkan 旧默认，shader 237 的 VS bindless textureSize 触发其编译线程崩溃，仅留作对照）
 #   FGOGLCOMPAT=0            禁用 AMD GL 兼容补丁（默认启用；NV bindless→SSBO 翻译层，缺它画面缺失）
 #   FGO_ZH_DLL=1             加载中文资源 hook（Wine 下已知可能加载失败，失败时移除即可）
-#   WINEDEBUG=err+all        打开 wine 调试输出
+#   WINEDEBUG=err+all        打开 wine 调试输出（默认 -all 全静音；实测 wine 日志仅占总日志量 0.2%）
+#   GLSHIM_QUIET=0           glshim 恢复全量 dump（默认 1=安静：跳过 shader 源码/infolog/dlsym dump，
+#                            保留 linklog/exitlog/linkfail/rewrite 异常现场记录）
+#   IPCDUMP_QUIET=0          ipcdump 恢复全量报文转储（默认 1=安静：只留 cngfix 日志）
+#   GAMEMODERUN=0            关闭 gamemoderun 包装（默认启用：gamemoderun 存在即自动套，
+#                            切 CPU governor 到 performance 并提优先级；SteamOS 自带 gamemode）
 #   GLSHIM=0                 关闭 glshim 诊断 shim（2026-09-20 起默认开启，见下）
 #   GLSHIM_STUB_IDS=...      定点 stub 着色器 id（默认无 stub——237/238 在 radeonsi 下正常，zink 时代遗产）
 set -euo pipefail
@@ -53,9 +58,10 @@ fi
 # GLSHIM=0 关闭；GLSHIM_STUB_IDS 默认空（237/238 stub 是 zink 时代遗产，radeonsi 不需要）
 GLSHIM="${GLSHIM:-1}"
 export GLSHIM_STUB_IDS="${GLSHIM_STUB_IDS-}"
+export GLSHIM_QUIET="${GLSHIM_QUIET:-1}"   # v8.2 安静模式：跳过全量 dump，保留异常现场记录
 if [ "$GLSHIM" = "1" ] && [ -f "$GAME_C/glshim.so" ]; then
   export LD_PRELOAD="$GAME_C/glshim.so"
-  echo "[launch] glshim: 启用（stub=${GLSHIM_STUB_IDS:-无}）"
+  echo "[launch] glshim: 启用（stub=${GLSHIM_STUB_IDS:-无} quiet=$GLSHIM_QUIET）"
 else
   echo "[launch] glshim: 已禁用"
 fi
@@ -165,20 +171,30 @@ export FGO_HIDE_UI=0 FGO_DISABLE_CAMERA_SHAKE=1 FGO_HIDE_CABINET_HUD=1
 export FGO_HIDE_UI_KEY=121
 export FGO_ZH_ENABLED=1
 export FGO_DECK_CHANNEL="FGODeck_$(printf 'C:\FGOA\APP' | sha256sum | cut -d' ' -f1 | tr a-z A-Z)"
-export FGO_EXIT_DIAGNOSTICS=1   # fgohook 退出诊断：hook NtTerminateProcess/ExitProcess，写 C:\FGOA\logs\fgo-exit-trace.log
+export FGO_EXIT_DIAGNOSTICS="${FGO_EXIT_DIAGNOSTICS:-0}"   # fgohook 退出诊断（4102 已结案，默认关；排查时 =1，写 C:\FGOA\logs\fgo-exit-trace.log）
 
 # ---- 6. 用 bottle 的 soda runner 拉起 ----
 RUNNER="$HOME/.var/app/com.usebottles.bottles/data/bottles/runners/soda-11.0-10"
 [ -x "$RUNNER/bin/wine" ] || RUNNER=$(dirname "$(ls -d "$HOME/.var/app/com.usebottles.bottles/data/bottles/runners/"*/bin/wine | sort -V | tail -1)")
 export WINEPREFIX="$BOTTLE"
-export WINEDEBUG="${WINEDEBUG:-err+all}"   # 0.4 节起死因定位移交 glshim v5（exitlog/linklog 自带落盘）；+file/+winsock 已结案，需要时手动 WINEDEBUG=err+all,+file,+winsock 覆盖
+export WINEDEBUG="${WINEDEBUG:--all}"   # 默认全静音（0.30 收尾待办）；排查时 WINEDEBUG=err+all 或 err+all,+file,+winsock 覆盖
 cd "$APP"
 echo "[launch] runner=$RUNNER deck=$FGO_DECK_CHANNEL"
 INJECT_K=(-k 'C:\FGOA\fgoapifix.dll')
 [ -n "$FGOGLCOMPAT_K" ] && INJECT_K+=(-k 'C:\FGOA\App\fgoglcompat.dll')
 INJECT_K+=(-k 'C:\FGOA\App\fgohook.dll')
-# amdipc IPC 报文转储（诊断 4102 用）：dll 存在即自动加载（与 wlanapi shim 的"拷文件即部署"模型一致），IPCDUMP=0 可强制关；结案后删 dll 即可
+# amdipc IPC 报文转储（诊断 4102 用）：dll 存在即自动加载（与 wlanapi shim 的"拷文件即部署"模型一致），IPCDUMP=0 可强制关
+# 注意：ipcdump.dll 是 cngfix 载体=永久必需品勿删；v8 起 IPCDUMP_QUIET=1（默认）只留 cngfix 日志，=0 恢复全量转储
+export IPCDUMP_QUIET="${IPCDUMP_QUIET:-1}"
 [ "${IPCDUMP:-auto}" != "0" ] && [ -f "$BOTTLE/drive_c/FGOA/ipcdump.dll" ] && INJECT_K+=(-k 'C:\FGOA\ipcdump.dll')
 [ -n "${FGO_ZH_DLL:-}" ] && INJECT_K+=(-k 'C:\FGOA\App\zh\fgozh.dll')
-"$RUNNER/bin/wine" inject.exe -d "${INJECT_K[@]}" \
+# Feral GameMode（Bottles 的"野兽模式"同款）：gamemoderun 存在即自动套，GAMEMODERUN=0 关闭
+GAMEMODE_WRAP=()
+if [ "${GAMEMODERUN:-1}" != "0" ] && command -v gamemoderun >/dev/null 2>&1; then
+  GAMEMODE_WRAP=(gamemoderun)
+  echo "[launch] gamemode: 启用（gamemoderun）"
+else
+  echo "[launch] gamemode: 未启用"
+fi
+"${GAMEMODE_WRAP[@]}" "$RUNNER/bin/wine" inject.exe -d "${INJECT_K[@]}" \
   ago.exe -hdtv720 -w --wasapi-shared 2>&1 | tee "$LOGS/deck-inject-live.log"

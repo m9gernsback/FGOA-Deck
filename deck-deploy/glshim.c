@@ -131,6 +131,10 @@ static glGetProgramiv_t real_GetProgramiv;
 static glGetProgramInfoLog_t real_GetProgramInfoLog;
 static glGetAttachedShaders_t real_GetAttachedShaders;
 
+/* v8.2: GLSHIM_QUIET=1 安静模式——跳过 shader 源码/infolog/programs/dlsym 全量 dump，
+ * 保留 linklog/exitlog/linkfail/rewrite/stub 记录（异常现场仍可查） */
+static int g_quiet;
+
 static void *resolve_libgl(const char *name);
 
 /* ---------------- v6: 定点 shader stub（GLSHIM_STUB_IDS="237,238"） ----------------
@@ -333,29 +337,34 @@ static void my_ShaderSource(GLuint s, GLsizei n, const GLchar **strs, const GLin
         return;
     }
 
-    /* v7: 同一 id 多次 ShaderSource 时全量保留（覆盖式 dump 丢过编译失败现场） */
+    /* v7: 同一 id 多次 ShaderSource 时全量保留（覆盖式 dump 丢过编译失败现场）
+     * v8.2: GLSHIM_QUIET=1 时跳过全量源码 dump（占单会话日志量的 ~87%），
+     * linklog/exitlog/linkfail/rewrite 记录不受影响 */
     static unsigned int src_seq[MAX_SHADER_STAGES];
     unsigned int seq = (s < MAX_SHADER_STAGES) ? src_seq[s]++ : 0;
     char path[128];
-    snprintf(path, sizeof(path), "/tmp/glshim/shader_%u.glsl", s);
-    FILE *f = fopen(path, "w");
-    if (f) {
-        for (GLsizei i = 0; i < n; i++) {
-            if (!strs[i]) continue;
-            size_t len = lens && lens[i] > 0 ? (size_t)lens[i] : strlen(strs[i]);
-            fwrite(strs[i], 1, len, f);
+    FILE *f = NULL;
+    if (!g_quiet) {
+        snprintf(path, sizeof(path), "/tmp/glshim/shader_%u.glsl", s);
+        f = fopen(path, "w");
+        if (f) {
+            for (GLsizei i = 0; i < n; i++) {
+                if (!strs[i]) continue;
+                size_t len = lens && lens[i] > 0 ? (size_t)lens[i] : strlen(strs[i]);
+                fwrite(strs[i], 1, len, f);
+            }
+            fclose(f);
         }
-        fclose(f);
-    }
-    snprintf(path, sizeof(path), "/tmp/glshim/shader_%u_q%u.glsl", s, seq);
-    f = fopen(path, "w");
-    if (f) {
-        for (GLsizei i = 0; i < n; i++) {
-            if (!strs[i]) continue;
-            size_t len = lens && lens[i] > 0 ? (size_t)lens[i] : strlen(strs[i]);
-            fwrite(strs[i], 1, len, f);
+        snprintf(path, sizeof(path), "/tmp/glshim/shader_%u_q%u.glsl", s, seq);
+        f = fopen(path, "w");
+        if (f) {
+            for (GLsizei i = 0; i < n; i++) {
+                if (!strs[i]) continue;
+                size_t len = lens && lens[i] > 0 ? (size_t)lens[i] : strlen(strs[i]);
+                fwrite(strs[i], 1, len, f);
+            }
+            fclose(f);
         }
-        fclose(f);
     }
 
     if (!getenv("GLSHIM_NOSTUB") && contains_nv_pointers(strs, lens, n)) {
@@ -408,7 +417,7 @@ static void my_CompileShader(GLuint s)
 static void my_GetShaderInfoLog(GLuint s, GLsizei bs, GLsizei *len, GLchar *log)
 {
     real_GetShaderInfoLog(s, bs, len, log);
-    if (log && log[0]) {
+    if (!g_quiet && log && log[0]) {
         char path[128];
         snprintf(path, sizeof(path), "/tmp/glshim/infolog_%u.txt", s);
         FILE *f = fopen(path, "w");
@@ -419,8 +428,10 @@ static void my_GetShaderInfoLog(GLuint s, GLsizei bs, GLsizei *len, GLchar *log)
 static GLuint my_CreateProgram(void)
 {
     GLuint p = real_CreateProgram();
-    FILE *f = fopen("/tmp/glshim/programs.txt", "a");
-    if (f) { fprintf(f, "glCreateProgram -> %u\n", p); fclose(f); }
+    if (!g_quiet) {
+        FILE *f = fopen("/tmp/glshim/programs.txt", "a");
+        if (f) { fprintf(f, "glCreateProgram -> %u\n", p); fclose(f); }
+    }
     return p;
 }
 
@@ -533,6 +544,7 @@ static void log_sym(const char *tag, const char *n)
 {
     static char seen[512][64];
     static int count;
+    if (g_quiet) return;
     if (!n || strlen(n) >= 64) return;
     for (int i = 0; i < count; i++) if (!strcmp(seen[i], n)) return;
     if (count < 512) {
@@ -690,6 +702,7 @@ static void glshim_init(void)
         if (libGL_handle) real_gpa = (glx_gpa_t)real_dlsym_fn(libGL_handle, "glXGetProcAddress");
     }
     mkdir("/tmp/glshim", 0777);
+    g_quiet = getenv("GLSHIM_QUIET") && getenv("GLSHIM_QUIET")[0] == '1';
     /* v5: 致命信号抓捕（sig_handler 里 re-raise 恢复默认行为） */
     int sigs[] = { SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE, SIGTERM, SIGINT, SIGQUIT };
     for (size_t i = 0; i < sizeof(sigs) / sizeof(sigs[0]); i++)
