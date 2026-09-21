@@ -1,0 +1,20 @@
+# ---- 游戏资产（大体积 / 版权内容，不进仓库）----
+FGOA/
+FGOA_BAK/
+FGOA_V1.01/
+FGOA_V1.02/
+FGOA.zip
+
+# ---- 第三方分发包（可再下载）----
+FGO汉化工具/
+AMD/
+AMD_Other/
+
+# ---- 调试日志原始 dump（8.4GB；结论已沉淀在 FGOA-Deck-调试进度.md）----
+deck-logs/
+
+# ---- 大体积二进制（MariaDB 官方 tarball，可再下载）----
+deck-deploy/mariadb-*.tar.gz
+
+# ---- SEGA 专有二进制（版权，不进仓库；zlanapi 补丁可用补丁工具重做）----
+deck-deploy/win-amdaemon-kit/amdaemon.exe
