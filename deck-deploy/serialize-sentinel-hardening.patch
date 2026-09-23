@@ -1,0 +1,39 @@
+--- src/compiler/glsl/serialize.cpp.orig	2026-09-23 12:23:15.298475537 +0800
++++ src/compiler/glsl/serialize.cpp	2026-09-23 12:24:08.237737708 +0800
+@@ -845,7 +845,8 @@
+ enum uniform_type
+ {
+    uniform_remapped,
+-   uniform_not_remapped
++   uniform_not_remapped,
++   uniform_inactive_explicit_location
+ };
+ 
+ static void
+@@ -898,7 +899,16 @@
+    case GL_TASK_SUBROUTINE_UNIFORM_EXT:
+    case GL_MESH_SUBROUTINE_UNIFORM_EXT:
+    case GL_UNIFORM:
+-      if (((gl_uniform_storage *)res->Data)->builtin ||
++      if (res->Type == GL_UNIFORM &&
++          res->Data == INACTIVE_UNIFORM_EXPLICIT_LOCATION) {
++         /* Inactive uniform with an explicit location: there is no
++          * gl_uniform_storage behind res->Data, only the sentinel
++          * (see write_uniform_remap_table()). Serialize a marker so the
++          * read side can restore the sentinel instead of dereferencing
++          * it here.
++          */
++         blob_write_uint32(metadata, uniform_inactive_explicit_location);
++      } else if (((gl_uniform_storage *)res->Data)->builtin ||
+           res->Type != GL_UNIFORM) {
+          blob_write_uint32(metadata, uniform_not_remapped);
+ 
+@@ -1002,6 +1012,8 @@
+       enum uniform_type type = (enum uniform_type) blob_read_uint32(metadata);
+       if (type == uniform_not_remapped) {
+          res->Data = &prog->data->UniformStorage[blob_read_uint32(metadata)];
++      } else if (type == uniform_inactive_explicit_location) {
++         res->Data = INACTIVE_UNIFORM_EXPLICIT_LOCATION;
+       } else {
+          res->Data = util_range_remap(blob_read_uint32(metadata),
+                                       prog->UniformRemapTable)->ptr;

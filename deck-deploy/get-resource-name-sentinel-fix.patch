@@ -1,0 +1,17 @@
+--- src/mesa/main/shader_query.cpp.orig	2026-09-23 12:46:26.143074757 +0800
++++ src/mesa/main/shader_query.cpp	2026-09-23 12:46:35.274947311 +0800
+@@ -553,6 +553,14 @@
+       return out->string != NULL;
+    case GL_UNIFORM:
+    case GL_BUFFER_VARIABLE:
++      /* A program restored from the disk cache may carry the
++       * INACTIVE_UNIFORM_EXPLICIT_LOCATION sentinel in resource Data
++       * (see read_program_resource_data()). Report it as nameless so the
++       * caller skips it instead of dereferencing the sentinel.
++       */
++      if (res->Type == GL_UNIFORM &&
++          res->Data == INACTIVE_UNIFORM_EXPLICIT_LOCATION)
++         return false;
+       *out = RESOURCE_UNI(res)->name;
+       return out->string != NULL;
+    case GL_VERTEX_SUBROUTINE_UNIFORM:

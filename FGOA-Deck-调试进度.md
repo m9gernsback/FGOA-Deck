@@ -1,11 +1,81 @@
 # FGOA Steam Deck 移植 — 调试进度记录
 
-> 最后更新：2026-09-21 午后（**全案已结**：进标题 + 刷卡 + 角色渲染全通过；新会话先读第 0 节 + 0.32 + 第 6 节）
+> 最后更新：2026-09-23（**✅ Mesa 缓存崩溃已根治，Deck 复测通过，缓存默认随补丁开启**；新会话先读第 0 节 + 0.39 + 第 6 节）
 > 前序文档：`WSL-Bottles-FGOA测试方案.md`、`SteamDeck-Bottles-FGOA部署方案.md`
+
+## 0.39 第四十轮（2026-09-23 午后~晚，缓存崩溃根因二次修正 + libgallium 二进制补丁 + ✅ Deck 复测通过结案）
+
+**对 0.37 根因的重要修正**：crash PC `libgallium+0x2f91d0`（`movdqu (%rax),%xmm0` + 24B 拷贝 + `cmpq $0,(%rsi); setne`）不是 serialize.cpp 写路径的 `->builtin` 解引用，而是 **`_mesa_program_get_resource_name`（shader_query.cpp:538）的 GL_UNIFORM 分支 `*out = RESOURCE_UNI(res)->name`**（gl_resource_name 恰 24 字节，逐字节吻合）。完整链：缓存命中恢复（`read_program_resource_data` 把 UniformRemapTable 里的 `INACTIVE_UNIFORM_EXPLICIT_LOCATION` 哨兵合法装回 `res->Data`，serialize.cpp:1006）→ `st_link_shader` 无条件调 `_mesa_create_program_resource_hash`（st_glsl_to_nir.cpp:811，**不在 ENABLE_SHADER_CACHE 门内**）→ 遍历资源取名字时解引用 -1。触发前提 = FGOA shader 大量 `layout(location=N)` 造成"活跃/未激活 uniform 显式 location 相撞"，remap 表该 location 条目为哨兵。佐证：fresh link 的资源列表只含活跃 uniform（gl_nir_linker.c:1125 传的是真 UniformStorage 指针），哨兵只能来自 deserialize → **与"MESA_SHADER_CACHE_DISABLE=true 永不崩"完全互洽**。环境变量分流路线已排除：`MESA_GLSL_CACHE_DISABLE` 在 25.3.0 已 deprecated 且等价于全禁（disk_cache_os.c:1022-1029），无独立开关。
+
+**二进制补丁（路线 B，已完成并验证）**：`deck-deploy/mesa-binpatch.py` 改写 `_mesa_program_get_resource_name` 的 GL_UNIFORM 共享分支（vaddr 0x2f91cc，跳转表 idx 0/1/4/5/7-12/19 共用）——`mov 0x8(%rdi),%rax` 后插 `cmp $-1,%rax; je →return false`（复用函数内现成的 `xor eax,eax;ret` stub @0x2f9170），原 24B 拷贝重排进腾出的 36B 连续空间（含尾部 9B nop 填充），语义=两个调用方（哈希构建 2208/按名查找 715）本就以 `if(!get_resource_name(...))` 跳过无名资源。**全 .text 控制流扫描确认无跳入补丁区内部**；dlopen 直调 harness（`~/mesa-build/binpatch_test.c`）对照：原版哨兵输入 SEGV / 补丁版 rc=0 不崩、合法 uniform 拷贝逐字节正确、default 分支不变。产物：`deck-deploy/libgallium-25.3.0-patched.so`（md5 `5989ee30468a11a476ee68bfa48d90c6`，原版 `c1a3e616b4697cea9ee69a1c120dec9a`）。
+
+**Deck 部署（待做）**：**重要修正——游戏加载的是宿主机 SteamOS 系统 Mesa（/usr/lib/libgallium-25.3.0.so），不是 flatpak runtime 的 Mesa**：fgo-launch-deck.sh 直跑 runner 的 wine 二进制、不经 `flatpak run` 沙箱（core 映射路径只有 /usr/lib/* 实锤；0.37/0.38 关于 flatpak GL 扩展升级的讨论建立在错误前提上，flatpak update 与本 bug 无关）。因此部署改为**用户态重定向，零系统改动**（SteamOS /usr 只读也不用碰）：`mesa-patch-install.sh` 校验系统 Mesa md5==基准后把补丁版装到 `~/Desktop/FGOA/mesa-patch/`（含 dri/radeonsi_dri.so、zink_dri.so 符号链接）；fgo-launch-deck.sh 检测到该目录即自动 `LD_LIBRARY_PATH` + `LIBGL_DRIVERS_PATH` 重定向（MESA_PATCH=0 可关）；还原 = `mesa-patch-revert.sh`（只删自己的目录）。**补丁生效验证已内置**：启动时自检补丁文件+系统基准双 md5 并打印；ago.exe 加载 GL 后后台 watcher 读 `/proc/<pid>/maps` 把 libgallium 真实加载路径写入 deck-inject-live.log（"运行时验证通过/失败"），开缓存但补丁未生效时启动即告警。对其他应用/游戏零影响（只影响本脚本拉起的进程）。**✅ Deck 复测通过（2026-09-23 晚）：补丁生效（watcher 验证 maps 加载路径），开缓存不再崩，第二次启动明显变快。缓存默认值已改为随补丁自适应：补丁在 → 默认 false（开缓存），补丁缺失/被关 → 默认 true（安全兜底），显式环境变量可覆盖。GameMode（Steam 添加非Steam 游戏）首启仍慢=该环境缓存冷启动（key 与桌面不同），第二次起同样快，属预期。**复测：`rm -rf ~/.cache/mesa_shader_cache*` → `MESA_SHADER_CACHE_DISABLE=false bash ~/Desktop/FGOA/fgoa-play.sh` 冷+暖两局，第二局应明显变快；游戏中 `grep libgallium /proc/$(pgrep -x ago.exe|head -1)/maps` 应见 mesa-patch 路径。仍崩则抓 core 回传。**SteamOS 系统更新换掉 Mesa 后补丁失效需重打**（install 脚本 md5 检查会拦住）。
+
+**源码补丁（路线 A 素材，已备好）**：`deck-deploy/get-resource-name-sentinel-fix.patch`（主修复）+ `serialize-sentinel-hardening.patch`（写侧加固：新增 `uniform_inactive_explicit_location` enum 让哨兵在缓存里往返，防 glGetProgramBinary 打击恢复后的 program）。issue 草案 `mesa-issue-glsl-serialize-sentinel.md` 已按修正后根因重写。全量自编 Mesa（任务#3）尚未做——WSL 无 sudo 且 DNS 挂（仅 DoH+curl --resolve 可用），构建依赖（meson/ninja/LLVM）装不了，需要用户授权 sudo 或先修 DNS。
+
+**遗留风险（低）**：`_mesa_program_resource_name`/`_mesa_program_resource_array_size` 对哨兵同样无防御，但只能经 GL program interface 查询 API 触达，FGOA 不走该路径（glGetUniformLocation 走 remap 表有哨兵检查）。**注意 harness 踩坑**：dlopen 返回值是 link_map* 不是基址，取基址要 `dlinfo(RTLD_DI_LINKMAP)->l_addr`。
+
+## 0.38 会话小结（2026-09-22~23，WSL 侧离线分析专场，全部产出与状态）
+
+**本轮没有改任何 Deck 运行配置**（MESA_SHADER_CACHE_DISABLE=true、radeonsi、glshim embedded-struct 改写、fgoglcompat、cngfix 双 dll、三符号链接照旧）。纯离线取证 + 研究。
+
+### 已结案的新结论
+1. **zink 时代 0xa76034 崩溃根因**（0.36）：zink `lower_bindless_instr`（zink_compiler.c:4371）对无 coord 的 txs（textureSize+bindless handle）读 `tex->src[-1]`。上游 main 未修。触发源 shader 237。
+2. **开缓存崩 242 的根因**（0.37）：`serialize.cpp: write_program_resource_data` 对 GL_UNIFORM 资源无哨兵检查，撞上 `INACTIVE_UNIFORM_EXPLICIT_LOCATION`（=(void*)-1）。冷/暖缓存都触发（写路径冷也跑）。上游 main 未修。
+3. **llvmpipe 25.2.8 回放实验**：142 shader + 100 link 冷/暖/混合全过 → 通用缓存路径无 bug，问题在链接期元数据序列化（driver 无关，glsl 共享层）。
+4. **卡顿归因**：两层缓存——fgoglcompat 翻译缓存（shader-cache-r10，持久、复用、勿删）正常；Mesa 编译缓存被禁用是卡顿主因（每次启动 + 每会话新特效首次出现都重编译）。恢复 Mesa 缓存的前提是修 bug#2。
+
+### 产出文件
+- `mesa-issue-zink-lower-bindless.md` — 上游 issue 草案①（zink src[-1]）
+- `mesa-issue-glsl-serialize-sentinel.md` — 上游 issue 草案②（serialize 哨兵解引用）
+- `deck-deploy/shader-replay.c` — EGL surfaceless shader 回放器（用法：`EGL_PLATFORM=surfaceless LIBGL_ALWAYS_SOFTWARE=1 MESA_EXTENSION_OVERRIDE="+GL_ARB_bindless_texture" MESA_SHADER_CACHE_DIR=/tmp/xx ./replay <glshim dump目录>`；bindless 需 override，llvmpipe 专用）
+- `deck-deploy/corescan.py` / `corefind.py` / `forensics.py` — core 取证三件套（线程/ucontext 扫描、SIGSEGV 定位、对象+栈取证）
+- core 分析惯例：Hist 里已存 `libgallium-25.3.0.so`（Deck runtime 原版，偏移对照基准）
+
+### Deck 侧现状（待办）
+- **Mesa 仍 25.3.0**（flatpak 未更新；Deck 同时装有 GL 扩展 24.08 和 25.08 分支，Bottles 用哪个需 `flatpak info com.usebottles.bottles | grep Runtime` 确认）。flathub tip：24.08→26.1.8、25.08→26.2.2。
+- **flatpak 升级复测价值降级**：两个 bug 上游 main 均未修，26.x 大概率照崩。仍可做（低成本），但预期管理：崩了抓 core 对照是否同一位置即可。
+- 可选根治路径：打 serialize.cpp 补丁自编 Mesa 25.3.0 → 自制 flatpak GL 扩展注入 bottle → 恢复 Mesa 缓存 → 消除卡顿。
+- 上游反馈渠道（0.30 遗留）现在有完整素材：Mesa ×2（上述两个 issue）、fgoglcompat 作者（embedded struct 改写需求）、wine/soda（bcrypt ECC）、ARTEMiS（ssl_version=3）。
+
+### AMD_Other 补丁研究（留档）
+`AMD_Other/a卡补丁v4.1` = GitHub 开源项目 **fluphus/fgo-arcade-amd-shim**（2026-09-16 london-fog-fix 快照）。与 fgoglcompat 不同作者不同路线（opengl32.dll 劫持 + 假地址 0x4647 模拟 bindless + 整篇替换 NV shader），带全源码，绑 Windows AMD 驱动 + 1080p，**不适合 Deck 直接换用**。价值：①伦敦地图白闪修复思路（compute dispatch 前从当前 UBO 刷新灯光 SSBO 指针绑定）可移植到 glshim ②tests/fixtures 有真实 shader 夹具 ③60FPS pacing 与 amdcfg 8192 批次上限与 fgoglcompat 独立收敛，交叉印证。仓库在活跃迭代（09-22 已出 pacing 修复新版）。
 
 ## 0. 一句话现状
 
 **✅ 已结案（2026-09-21 午后）：Deck 成功进入标题画面。** 4102 根因 = soda-11.0-10 的 bcrypt 编译时缺 ECC secret 派生（`Compiled without ECC secret support`），amdipc ECK1 密钥协商在 `BCryptDeriveKey(HASH)` 必败 → Messenger 卡 state 2 → 推送被门死 → 对称死锁。修复 = ipcdump v7 内置 cngfix（钩 SecretAgreement/DeriveKey 合成派生密钥），Deck 部署 v7 双 dll 后一局进标题。**注意：cngfix 是永久必需品——Deck 上的 `drive_c/FGOA/ipcdump.dll` 和 `drive_c/FGOA/App/am/wlanapi.dll` 不能删**（删了就回到 4102）。
+
+## 0.37 第三十九轮（2026-09-23，冷缓存崩溃 core 取证：bug#2 根因实锤 = serialize.cpp 程序元数据序列化对 INACTIVE_UNIFORM_EXPLICIT_LOCATION 哨兵（Data=-1）无检查解引用）
+
+素材：deck-logs/20260923-102800/（真·冷缓存，mesa_shader_cache 清空后第一局即崩，崩后缓存目录零写入；core.ago.8263 已解压分析）。**Deck Mesa 仍为 25.3.0（flatpak 未更新；GL.txt 显示 Deck 同时装有 24.08/25.08 两套 runtime 分支）。**
+
+- **死亡点不变**：linklog 止于 program 242 status query（主线程等待）；真实崩溃在 **Mesa util_queue 工作线程**（栈底 trampoline = job 调度器，与 zink 时代同款签名）。
+- **崩溃指令**：libgallium+0x2f91d0 `movdqu (%rax),%xmm0`，RAX=CR2=0xffffffffffffffff —— 解引用 **-1 指针**。
+- **调用链**（自底向上）：util_queue 线程 → job → link 层（st_link_shader/st_glsl_to_nir.cpp 区域，含 "linking with uncompiled/unspecialized shader"/"GLSL shader program %d info log:" 字符串实锤）→ 0x2fb7d0（遍历 program 资源，gl_program_resource = {GLenum16 Type; void *Data; u8 StageRef} 24 字节）→ helper 读 res->Data 崩。
+- **崩溃对象**：ProgramResourceList 首条目 Type=0x92e1（GL_UNIFORM）、**Data=(void*)-1**；后续兄弟条目 Data 均为有效指针。
+- **-1 的身份实锤**：`shader_types.h:51` —— `#define INACTIVE_UNIFORM_EXPLICIT_LOCATION ((struct gl_uniform_storage *) -1)`，Mesa 对"显式 location 但未激活 uniform"的合法哨兵。
+- **代码路径**：缓存启用 → 链接成功后 `shader_cache_write_program_metadata`（st_glsl_to_nir.cpp:831，`#ifdef ENABLE_SHADER_CACHE` 门内）→ `serialize_glsl_program` → `write_program_resource_list` → `write_program_resource_data` 的 GL_UNIFORM 分支直接 `((gl_uniform_storage *)res->Data)->builtin/->name.string`，**不查哨兵**（serialize.cpp:900-908）。remap 表写路径（serialize.cpp:588/614）有哨兵检查，资源列表写路径没有。
+- **上游 main（2026-09-23）仍未修**；且 deserialize 读路径（serialize.cpp:1006 `res->Data = util_range_remap(...)->ptr`）会把 remap 表里的哨兵合法地装回 res->Data → 暖缓存轮次也有同款风险（0.14/0.34 的 242 死因大概率就是它，与本次冷启动同一处）。
+- **冷启动也崩的成因**：首轮即触发说明写路径本身就会在某种 uniform 形态下产生/遇到哨兵条目（显式 location + inactive 的 uniform，FGOA shader 大量 layout(location=N) 声明）。
+- **结论**：MESA_SHADER_CACHE_DISABLE=true 仍是正确 workaround（元数据写路径整体跳过）；**flatpak 升级到 26.2.2 大概率也修不了**（main 未修），复测价值降级但不排除周边改动改变触发条件。
+- **修复方案**：上游补丁 = write_program_resource_data 对 GL_UNIFORM 分支加 `res->Data == INACTIVE_UNIFORM_EXPLICIT_LOCATION` 检查（写 remap_type_inactive_explicit_location 或直接跳过，参照 588/614 的既有处理）。本地如需缓存加速，可用该补丁自编 Mesa 做 flatpak GL 扩展。
+
+## 0.36 第三十八轮（2026-09-22，WSL 侧离线取证：zink 0xa76034 崩溃根因实锤 = lower_bindless_instr 对无 coord 的 txs 越界读 src[-1]；暖缓存 242 崩溃是另一个 bug，待 Deck 取 core）
+
+**本段全部在 Windows/WSL 侧离线完成**，素材 = Hist/coredump/core.ago.14391 + Hist/libgallium-25.3.0.so + 20260921-142225 轮 glshim dump。
+
+- **崩溃函数实锤 = zink `lower_bindless_instr`**（mesa-25.3.0 `src/gallium/drivers/zink/zink_compiler.c:4371`）。证据链：
+  - 崩溃对象按 `+0x18` 类型字节 3/4 分派 = nir_instr_type tex(3)/intrinsic(4)（nir_instr 布局：node 0x10 + block 指针 → type 恰在 +0x18）
+  - intrinsic 走 14 项跳转表（0x33-0x40），8 活 6 空 → 字母序 nir_intrinsic_op 的 bindless_image_* 族（OP_SWAP 8 个）✓
+  - 崩溃对象（ucontext RBX）内存：+0x18=3(tex)、sampler_dim=1(2D)、dest_type=0x22(int32)、**op@+0x28=8=nir_texop_txs（textureSize）**、src 数组 3 项 src_type={0x10 texture_handle, 0x11 sampler_handle, 0x5 lod}、**无 coord**
+  - 崩溃指令 `mov 0x18(%rax),%r9` 中 rax = src数组 + **0x27ffffffd8**（编译器把 `-1*0x28` 折叠成的常数，core 里指令流有 `movabs $0x27ffffffd8,%rcx` 实证）
+- **根因代码**（zink_compiler.c:4404-4406，Warhammer 40k 补丁引入）：`unsigned c = nir_tex_instr_src_index(tex, nir_tex_src_coord); nir_src_num_components(tex->src[c].src);` —— **txs（textureSize）没有 coord src，src_index 返回 -1，转 unsigned 后 tex->src[-1] 野指针读 → SIGSEGV**。**上游 main（2026-09-22）仍未修**（同代码在 main:4640）。
+- **触发源 = shader 237**（`shader_237_q0.glsl:94`：`textureSize(sampler2D(fgo_handle_bits(...)), 0)` —— bindless 句柄构造采样器 + textureSize，VS 阶段，全场唯一）。与 0.13 stub 实验完全互洽：stub 掉 237/238 即越过 239。
+- **为何外国线程无声死亡**：zink 在工作线程（util_queue cache_get_thread 的 optimized_compile_job）里跑 shader 编译 → lower_bindless 崩 → wine 对外国线程 NULL TEB 双重 fault（0.11）。
+- **重要分案**：此 bug 是 zink 专属、冷缓存也触发（第 11-13 轮死 239）。**0.14/0.34 的"暖缓存死 program 242"是另一个 bug**（radeonsi 无 lower_bindless 照样死）——仍待定位，需要在 Deck 上暖缓存复现时抓 core 做同款取证。
+- **对当前 radeonsi 方案无影响**（zink 已退役），但值得报上游 Mesa：最小复现 = GLSL 里对 bindless sampler 调 textureSize。
+- **新工具**（已入 deck-deploy/）：`shader-replay.c`（EGL surfaceless 回放 glshim dump，冷/暖缓存对照）、`corescan.py`（coredump 线程/ucontext 扫描）、`forensics.py`（崩溃现场对象+栈取证）。llvmpipe 25.2.8 上回放 142 shader + 100 link 全过（冷、暖、混合三种），证明缓存命中通用路径无 bug，bug#2 在驱动专属缓存路径。
+- **Deck 侧下一步**：①`flatpak update`（GL 扩展 tip 已是 Mesa 26.2.2）→ `MESA_SHADER_CACHE_DISABLE=false` 复测 ②仍崩则抓 core（coredumpctl）+ 回传，用同款取证定位 bug#2 ③zink lower_bindless 上游报告素材已齐。
 
 ## 0.35 第三十七轮（2026-09-21 晚，✅ 已结案：刷卡能读礼装但从者卡不显示——call_up 硬依赖 catalog，反斜杠 CardsPath 在 Linux 必败）
 
@@ -503,6 +573,7 @@ Deck 侧位置：脚本+desktop+tarball → `~/Desktop/FGOA/`；glshim.so+fgoapi
 ## 6. 下一步（新会话从这里继续）
 
 1. **4102 已结案（0.30 终验通过：Deck 进标题）**：根因=soda bcrypt 缺 ECC secret 派生（0.29）；修复=ipcdump v7 内置 cngfix。**Deck 上 v7 的 ipcdump.dll + wlanapi.dll 是永久必需品，勿删**。若某轮又 4102：先确认这两个 dll 还在且是 v7
+2. ~~MESA_SHADER_CACHE_DISABLE 根治~~ **已结案（0.39，Deck 复测通过）**：根因二次修正 = 缓存恢复后 `_mesa_program_get_resource_name` 解引用 -1 哨兵（非 0.37 判的 serialize 写路径）。**游戏用的是宿主机系统 Mesa /usr/lib/libgallium-25.3.0.so（直跑 runner 不经 flatpak），部署走用户态 LD_LIBRARY_PATH+LIBGL_DRIVERS_PATH 重定向**（mesa-patch-install.sh / revert.sh）。缓存默认值已随补丁自适应（补丁在→默认开）。**残留：源码补丁两份（get-resource-name-sentinel-fix / serialize-sentinel-hardening）待报 Mesa 上游；SteamOS 更新换 Mesa 后需用 mesa-binpatch.py 对新 libgallium 重打**
 2. ~~billing TLS~~ **已结案**（0.20/0.21：修复一~三固化进 fgoa-server-start.sh，billing checkin 全通；注：客户端其实讲 TLS1.2，修复三的 TLS1.0 放行是加固而非必需）
 3. **GL 层已结案**：着色器 1719/1719 全过、926 program 全链接、embedded struct 族 12 个全部改写成功（0.17）。纯验证项（不阻塞）：去 stub 跑 `GLSHIM_STUB_IDS="" bash ~/Desktop/FGOA/fgoa-play.sh` 看真实 237/238 在禁缓存下是否也过
 4. **zink/Mesa bug 反馈**（证据已齐）：缓存禁用即通 vs 预热必崩（0.14/0.15）、libgallium+0xa76034 NIR 访问器哈希链野指针、wine 外国线程双重 fault；渠道 = fgoglcompat 作者 + Mesa gitlab + wine（NtCurrentTeb NULL 防御）；embedded struct 问题也值得告知作者（翻译器可直接输出提升后的形式）；ARTEMiS 的 ssl_version=3 问题也值得给上游提 issue

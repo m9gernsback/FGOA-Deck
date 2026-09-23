@@ -14,6 +14,8 @@
 #                            切 CPU governor 到 performance 并提优先级；SteamOS 自带 gamemode）
 #   GLSHIM=0                 关闭 glshim 诊断 shim（2026-09-20 起默认开启，见下）
 #   GLSHIM_STUB_IDS=...      定点 stub 着色器 id（默认无 stub——237/238 在 radeonsi 下正常，zink 时代遗产）
+#   MESA_PATCH=0             关闭 libgallium 哨兵补丁重定向（默认检测到 ~/Desktop/FGOA/mesa-patch/ 即启用，
+#                            启用时启动自检 md5 并在 ago.exe 加载 GL 后把 maps 里的真实路径写进日志）
 set -euo pipefail
 
 BOTTLE="$HOME/.var/app/com.usebottles.bottles/data/bottles/bottles/FGOA"
@@ -37,10 +39,65 @@ fi
 # ago.exe 无条件调用 NV 专属 GL 入口。fgoglcompat.dll（见下方 inject 链）在 Windows WGL 层
 # 自建 resolver 提供这些入口并翻译着色器，正常时 Mesa 根本看不到 NV 调用；override 仅作兜底保留。
 export MESA_EXTENSION_OVERRIDE="+GL_NV_bindless_texture +GL_NV_shader_buffer_load +GL_NV_vertex_buffer_unified_memory +GL_NV_vertex_attrib_integer_64bit +GL_NV_bindless_multi_draw_indirect"
-# Mesa 磁盘着色器缓存命中路径崩溃（libgallium NIR 访问器野指针，死在 glGetProgramiv/编译线程）。
-# 2026-09-20 在 zink 实锤；2026-09-21 在 radeonsi 复现（同样预热即崩、止于 program 242 status query）
-# ——libgallium 是两后端共享代码，此 bug 与后端无关 → 永久禁用。代价：每次启动现场编译着色器。
-export MESA_SHADER_CACHE_DISABLE="${MESA_SHADER_CACHE_DISABLE:-true}"
+# Mesa 磁盘着色器缓存命中恢复路径崩溃（_mesa_program_get_resource_name 解引用 -1 哨兵，
+# 见 0.39 根因修正）已由 mesa-patch 根治。默认值随补丁状态自适应：补丁生效 → 默认开缓存
+# （false，消除每局着色器重编译卡顿）；补丁缺失/被关 → 默认禁缓存（true，安全兜底）。
+# 显式 MESA_SHADER_CACHE_DISABLE=true/false 可覆盖默认。
+# libgallium 哨兵崩溃二进制补丁（0.39，用户态重定向，不动系统文件）：
+# 游戏跑宿主机 Mesa（直跑 runner 不经 flatpak 沙箱），~/Desktop/FGOA/mesa-patch/
+# 存在即通过 LD_LIBRARY_PATH + LIBGL_DRIVERS_PATH 重定向到补丁版 libgallium，
+# 从而可以安全地 MESA_SHADER_CACHE_DISABLE=false（消除每局着色器重编译卡顿）。
+# MESA_PATCH=0 强制关闭；mesa-patch-install.sh 部署 / mesa-patch-revert.sh 还原
+MESA_PATCH_ON=0
+MESA_PATCH_DIR="$HOME/Desktop/FGOA/mesa-patch"
+MESA_PATCH_MD5=5989ee30468a11a476ee68bfa48d90c6
+MESA_BASE_MD5=c1a3e616b4697cea9ee69a1c120dec9a
+if [ "${MESA_PATCH:-1}" != "0" ] && [ -f "$MESA_PATCH_DIR/libgallium-25.3.0.so" ]; then
+  export LD_LIBRARY_PATH="$MESA_PATCH_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  export LIBGL_DRIVERS_PATH="$MESA_PATCH_DIR/dri:/usr/lib/dri"
+  MESA_PATCH_ON=1
+  # 启动自检：补丁文件未被改坏 + 系统 Mesa 仍是补丁基准版本（SteamOS 更新后需重打）
+  _pmd5=$(md5sum "$MESA_PATCH_DIR/libgallium-25.3.0.so" | cut -d' ' -f1)
+  _smd5=$(md5sum /usr/lib/libgallium-25.3.0.so 2>/dev/null | cut -d' ' -f1 || echo missing)
+  [ "$_pmd5" = "$MESA_PATCH_MD5" ] && _pok=OK || _pok="MISMATCH($_pmd5)"
+  [ "$_smd5" = "$MESA_BASE_MD5" ] && _sok=OK || _sok="MISMATCH($_smd5)"
+  echo "[launch] mesa-patch: 启用（补丁 md5 $_pok / 系统基准 $_sok）"
+  [ "$_pok" = OK ] && [ "$_sok" = OK ] || echo "[launch] 警告: mesa-patch 校验异常，建议重跑 mesa-patch-install.sh 或 MESA_PATCH=0"
+else
+  echo "[launch] mesa-patch: 未启用（$MESA_PATCH_DIR 不存在或 MESA_PATCH=0）"
+fi
+if [ "$MESA_PATCH_ON" = "1" ]; then
+  export MESA_SHADER_CACHE_DISABLE="${MESA_SHADER_CACHE_DISABLE:-false}"
+else
+  export MESA_SHADER_CACHE_DISABLE="${MESA_SHADER_CACHE_DISABLE:-true}"
+fi
+echo "[launch] Mesa 着色器缓存: $([ "$MESA_SHADER_CACHE_DISABLE" = "false" ] && echo 启用 || echo 禁用)"
+# 缓存开关与补丁状态交叉检查：开缓存但没补丁 = 已知必崩组合，明确警告
+if [ "${MESA_SHADER_CACHE_DISABLE}" = "false" ] && [ "$MESA_PATCH_ON" != "1" ]; then
+  echo "[launch] 警告: 缓存已开启但 mesa-patch 未生效——命中 0.39 哨兵崩溃的风险极高！"
+fi
+# 运行时验证：ago.exe 起来后从 /proc/<pid>/maps 读真实加载路径写进日志（tee 的输出文件）
+if [ "$MESA_PATCH_ON" = "1" ]; then
+  (
+    for _ in $(seq 1 150); do
+      _pid=$(pgrep -x ago.exe | head -1)
+      if [ -n "$_pid" ] && [ -r "/proc/$_pid/maps" ]; then
+        _line=$(grep -m1 'libgallium' "/proc/$_pid/maps" 2>/dev/null) || true
+        if [ -n "$_line" ]; then
+          _path=$(echo "$_line" | awk '{print $NF}')
+          if [[ "$_path" == *mesa-patch* ]]; then
+            echo "[mesa-patch] 运行时验证通过: ago.exe(pid $_pid) 加载补丁版 $_path" | tee -a "$LOGS/deck-inject-live.log"
+          else
+            echo "[mesa-patch] 运行时验证失败: ago.exe(pid $_pid) 加载的是 $_path（补丁未生效！）" | tee -a "$LOGS/deck-inject-live.log"
+          fi
+          exit 0
+        fi
+      fi
+      sleep 2
+    done
+    echo "[mesa-patch] 运行时验证超时: 300s 内未见 ago.exe 加载 libgallium" | tee -a "$LOGS/deck-inject-live.log"
+  ) &
+fi
 # fgoglcompat.dll 检查：默认启用，FGOGLCOMPAT=0 关闭
 FGOGLCOMPAT_K=""
 if [ "${FGOGLCOMPAT:-1}" = "1" ]; then
