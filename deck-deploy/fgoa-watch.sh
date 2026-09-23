@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # FGOA 挂死/闪退观测脚本 — 盯内存曲线 + ago.exe 线程状态
 # 用法：先在另一个终端启动本脚本（它会等 ago.exe 出现），再启动游戏
-#   bash ~/Desktop/FGOA/fgoa-watch.sh
+#   bash <脚本目录>/fgoa-watch.sh
 # 输出：/tmp/memwatch.log（游戏进程消失后自动收尾，末尾 50 行是重点）
 
 LOG=/tmp/memwatch.log

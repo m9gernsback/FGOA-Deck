@@ -164,5 +164,6 @@ ip addr show lo | grep 192.168.100.1
 
 echo
 echo "===== 初始化完成 ====="
-echo "启动服务器:  bash ~/fgoa-server-start.sh"
-echo "启动游戏:    bash ~/fgo-launch-deck.sh"
+echo "脚本目录:    $SCRIPT_DIR（可整体移动/改名，脚本均自定位）"
+echo "一键游玩:    bash $SCRIPT_DIR/fgoa-play.sh"
+echo "桌面快捷方式: bash $SCRIPT_DIR/fgoa-desktop-install.sh"

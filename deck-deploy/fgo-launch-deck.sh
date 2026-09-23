@@ -14,10 +14,13 @@
 #                            切 CPU governor 到 performance 并提优先级；SteamOS 自带 gamemode）
 #   GLSHIM=0                 关闭 glshim 诊断 shim（2026-09-20 起默认开启，见下）
 #   GLSHIM_STUB_IDS=...      定点 stub 着色器 id（默认无 stub——237/238 在 radeonsi 下正常，zink 时代遗产）
-#   MESA_PATCH=0             关闭 libgallium 哨兵补丁重定向（默认检测到 ~/Desktop/FGOA/mesa-patch/ 即启用，
+#   MESA_PATCH=0             关闭 libgallium 哨兵补丁重定向（默认检测到 <脚本目录>/mesa-patch/ 即启用，
+#   MESA_PATCH_DIR=...       自定义 mesa-patch 目录（默认 <脚本目录>/mesa-patch）
 #                            启用时启动自检 md5 并在 ago.exe 加载 GL 后把 maps 里的真实路径写进日志）
 set -euo pipefail
 
+# 脚本目录自定位：整个 FGOA 脚本目录放哪都能跑（~/Desktop/FGOA、~/Games/FGOA …）
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 BOTTLE="$HOME/.var/app/com.usebottles.bottles/data/bottles/bottles/FGOA"
 GAME_C="$BOTTLE/drive_c/FGOA"          # = C:\FGOA (installRoot)
 APP="$GAME_C/App"                      # = C:\FGOA\App (gameRoot)
@@ -44,12 +47,12 @@ export MESA_EXTENSION_OVERRIDE="+GL_NV_bindless_texture +GL_NV_shader_buffer_loa
 # （false，消除每局着色器重编译卡顿）；补丁缺失/被关 → 默认禁缓存（true，安全兜底）。
 # 显式 MESA_SHADER_CACHE_DISABLE=true/false 可覆盖默认。
 # libgallium 哨兵崩溃二进制补丁（0.39，用户态重定向，不动系统文件）：
-# 游戏跑宿主机 Mesa（直跑 runner 不经 flatpak 沙箱），~/Desktop/FGOA/mesa-patch/
+# 游戏跑宿主机 Mesa（直跑 runner 不经 flatpak 沙箱），<脚本目录>/mesa-patch/
 # 存在即通过 LD_LIBRARY_PATH + LIBGL_DRIVERS_PATH 重定向到补丁版 libgallium，
 # 从而可以安全地 MESA_SHADER_CACHE_DISABLE=false（消除每局着色器重编译卡顿）。
 # MESA_PATCH=0 强制关闭；mesa-patch-install.sh 部署 / mesa-patch-revert.sh 还原
 MESA_PATCH_ON=0
-MESA_PATCH_DIR="$HOME/Desktop/FGOA/mesa-patch"
+MESA_PATCH_DIR="${MESA_PATCH_DIR:-$DIR/mesa-patch}"
 MESA_PATCH_MD5=5989ee30468a11a476ee68bfa48d90c6
 MESA_BASE_MD5=c1a3e616b4697cea9ee69a1c120dec9a
 if [ "${MESA_PATCH:-1}" != "0" ] && [ -f "$MESA_PATCH_DIR/libgallium-25.3.0.so" ]; then

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # mesa-patch-revert.sh — 还原 libgallium 补丁（用户态部署，只删自己的目录）
 set -euo pipefail
-TARGET="$HOME/Desktop/FGOA/mesa-patch"
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+TARGET="${MESA_PATCH_DIR:-$DIR/mesa-patch}"
 if [ -d "$TARGET" ]; then
   rm -rf "$TARGET"
   echo "[已删除] $TARGET — 下次启动自动回到系统原版 Mesa"

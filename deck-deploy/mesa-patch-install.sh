@@ -8,7 +8,7 @@
 #   LD_LIBRARY_PATH    → 覆盖 DT_NEEDED(libgallium-25.3.0.so) 解析
 #   LIBGL_DRIVERS_PATH → 覆盖 Mesa loader 的 dri 驱动搜索（radeonsi_dri.so 等）
 # 只影响从 fgo-launch-deck.sh 启动的进程，对其他应用/游戏零影响；
-# 还原 = 删 ~/Desktop/FGOA/mesa-patch/ 或 MESA_PATCH=0。
+# 还原 = 删 <脚本目录>/mesa-patch/ 或 MESA_PATCH=0。
 #
 # 用法: bash mesa-patch-install.sh [patched.so 路径]
 set -euo pipefail
@@ -17,7 +17,8 @@ ORIG_MD5=c1a3e616b4697cea9ee69a1c120dec9a     # 制作补丁用的基准原版
 PATCHED_MD5=5989ee30468a11a476ee68bfa48d90c6 # mesa-binpatch.py 产物
 DIR="$(cd "$(dirname "$0")" && pwd)"
 PATCHED="${1:-$DIR/libgallium-25.3.0-patched.so}"
-TARGET="$HOME/Desktop/FGOA/mesa-patch"
+# 补丁目录默认跟随脚本自身位置（整个 FGOA 目录放哪都行），可用 MESA_PATCH_DIR 覆盖
+TARGET="${MESA_PATCH_DIR:-$DIR/mesa-patch}"
 SYS=/usr/lib/libgallium-25.3.0.so
 
 [ -f "$PATCHED" ] || { echo "找不到补丁文件: $PATCHED"; exit 1; }
@@ -50,11 +51,11 @@ echo "       （fgo-launch-deck.sh 检测到该目录即自动启用；MESA_PATC
 cat <<'EOF'
 
 == 复测步骤 ==
-1. 确认 launch 脚本已更新（deck-deploy/fgo-launch-deck.sh 同步到 ~/Desktop/FGOA/）
+1. 确认 launch 脚本已更新（deck-deploy/fgo-launch-deck.sh 同步到 Deck 上的 FGOA 脚本目录）
 2. 冷缓存: rm -rf ~/.cache/mesa_shader_cache* ~/.var/app/com.usebottles.bottles/cache/mesa_shader_cache*
-3. MESA_SHADER_CACHE_DISABLE=false bash ~/Desktop/FGOA/fgoa-play.sh
+3. MESA_SHADER_CACHE_DISABLE=false bash <脚本目录>/fgoa-play.sh
 4. 游戏中另开终端验证补丁真的加载了:
    grep -m2 -E 'libgallium|radeonsi_dri' /proc/$(pgrep -x ago.exe | head -1)/maps
-   → 应显示 /home/deck/Desktop/FGOA/mesa-patch/ 下的路径
+   → 应显示 <脚本目录>/mesa-patch/ 下的路径
 5. 不崩且第二局启动明显变快 = 根治成功；仍崩则抓 core（coredumpctl）回传
 EOF

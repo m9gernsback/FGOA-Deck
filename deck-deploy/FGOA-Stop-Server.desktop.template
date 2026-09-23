@@ -4,8 +4,8 @@ Name=FGOA Stop Server
 Name[zh_CN]=FGOA 停止服务器
 Comment=Stop FGOA local server (MariaDB + ARTEMiS)
 Comment[zh_CN]=停止 FGOA 本地服务器（MariaDB + ARTEMiS）
-# 脚本与本文件都放在 ~/Desktop/FGOA/ 下；若目录不同请修改下面路径
-Exec=konsole --hold -e bash /home/deck/Desktop/FGOA/fgoa-server-stop.sh
+# 模板：@FGOA_DIR@ 由 fgoa-desktop-install.sh 替换为实际脚本目录后安装
+Exec=konsole --hold -e bash @FGOA_DIR@/fgoa-server-stop.sh
 Icon=process-stop
 Terminal=false
 Categories=Game;
