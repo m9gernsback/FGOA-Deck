@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=FGOA Play
+Name[zh_CN]=FGOA 一键游玩
+Comment=Start local server and run Fate/Grand Order Arcade
+Comment[zh_CN]=启动本地服务器并运行 Fate/Grand Order Arcade
+# 模板：@FGOA_DIR@ 由 fgoa-desktop-install.sh 替换为实际脚本目录后安装
+Exec=konsole --hold -e bash @FGOA_DIR@/fgoa-play.sh
+Icon=applications-games
+Terminal=false
+Categories=Game;

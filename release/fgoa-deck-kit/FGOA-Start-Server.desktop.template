@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=FGOA Start Server
+Name[zh_CN]=FGOA 仅启动服务器
+Comment=Start FGOA local server only (debug; launch game separately)
+Comment[zh_CN]=只启动本地服务器（调试用，游戏需另开）
+# 模板：@FGOA_DIR@ 由 fgoa-desktop-install.sh 替换为实际脚本目录后安装
+Exec=konsole --hold -e bash @FGOA_DIR@/fgoa-server-start.sh
+Icon=server
+Terminal=false
+Categories=Game;

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=FGOA Deck Editor
+Name[zh_CN]=FGOA 卡组编辑器
+Comment=Browse cards and edit deck.json for Fate/Grand Order Arcade
+Comment[zh_CN]=浏览卡图并编辑 ago.exe 读取的卡组（deck.json）
+# 模板：@FGOA_DIR@ 由 fgoa-desktop-install.sh 替换为实际脚本目录后安装
+Exec=konsole --hold -e bash -c 'cd @FGOA_DIR@/carddeck && python3 server.py'
+Icon=applications-games
+Terminal=false
+Categories=Game;
