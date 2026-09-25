@@ -53,19 +53,32 @@ export MESA_EXTENSION_OVERRIDE="+GL_NV_bindless_texture +GL_NV_shader_buffer_loa
 # MESA_PATCH=0 强制关闭；mesa-patch-install.sh 部署 / mesa-patch-revert.sh 还原
 MESA_PATCH_ON=0
 MESA_PATCH_DIR="${MESA_PATCH_DIR:-$DIR/mesa-patch}"
-MESA_PATCH_MD5=5989ee30468a11a476ee68bfa48d90c6
-MESA_BASE_MD5=c1a3e616b4697cea9ee69a1c120dec9a
-if [ "${MESA_PATCH:-1}" != "0" ] && [ -f "$MESA_PATCH_DIR/libgallium-25.3.0.so" ]; then
-  export LD_LIBRARY_PATH="$MESA_PATCH_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-  export LIBGL_DRIVERS_PATH="$MESA_PATCH_DIR/dri:/usr/lib/dri"
-  MESA_PATCH_ON=1
-  # 启动自检：补丁文件未被改坏 + 系统 Mesa 仍是补丁基准版本（SteamOS 更新后需重打）
-  _pmd5=$(md5sum "$MESA_PATCH_DIR/libgallium-25.3.0.so" | cut -d' ' -f1)
-  _smd5=$(md5sum /usr/lib/libgallium-25.3.0.so 2>/dev/null | cut -d' ' -f1 || echo missing)
-  [ "$_pmd5" = "$MESA_PATCH_MD5" ] && _pok=OK || _pok="MISMATCH($_pmd5)"
-  [ "$_smd5" = "$MESA_BASE_MD5" ] && _sok=OK || _sok="MISMATCH($_smd5)"
-  echo "[launch] mesa-patch: 启用（补丁 md5 $_pok / 系统基准 $_sok）"
-  [ "$_pok" = OK ] && [ "$_sok" = OK ] || echo "[launch] 警告: mesa-patch 校验异常，建议重跑 mesa-patch-install.sh 或 MESA_PATCH=0"
+# 已知补丁/基准 md5 对照（mesa-binpatch.py VERSIONS 表；SteamOS 更新换掉系统 Mesa 后需重打）
+MESA_PATCH_MD5S="5989ee30468a11a476ee68bfa48d90c6 868ae27b557c8a2eb3331c4cf990ad7e"  # 25.3.0 / 26.1.2
+MESA_BASE_MD5S="c1a3e616b4697cea9ee69a1c120dec9a 3236bf4fe1b1e92117fbd2a882032ead"   # 25.3.0 / 26.1.2
+_patch_so=$(ls "$MESA_PATCH_DIR"/libgallium-*.so 2>/dev/null | head -1)
+_sys_so=$(ls /usr/lib/libgallium-*.so 2>/dev/null | head -1)
+if [ "${MESA_PATCH:-1}" != "0" ] && [ -n "$_patch_so" ]; then
+  # 启动自检（任一不过则自动停用补丁回退关缓存，绝不加载与系统 Mesa 不匹配的库）：
+  # 1) 补丁文件 md5 在已知补丁表内（未被改坏/不是未知产物）
+  # 2) 补丁 soname == 系统 libgallium soname（SteamOS 更新换掉 Mesa 后版本必然不匹配 → 停用）
+  # 3) 系统库 md5 在已知基准表内（确认补丁确为该原版所制）
+  _pmd5=$(md5sum "$_patch_so" | cut -d' ' -f1)
+  _smd5=$(md5sum "${_sys_so:-/dev/null}" 2>/dev/null | cut -d' ' -f1 || echo missing)
+  _pbase=$(basename "$_patch_so"); _sbase=$(basename "${_sys_so:-missing}")
+  _why=""
+  case " $MESA_PATCH_MD5S " in *" $_pmd5 "*) ;; *) _why="补丁 md5 未知($_pmd5)";; esac
+  [ -z "$_why" ] && [ "$_pbase" != "$_sbase" ] && _why="版本不匹配(补丁$_pbase/系统$_sbase)——SteamOS 更新过 Mesa？需重打补丁"
+  if [ -z "$_why" ]; then case " $MESA_BASE_MD5S " in *" $_smd5 "*) ;; *) _why="系统库 md5 未知($_smd5)——需用新系统库重新制作补丁";; esac; fi
+  if [ -z "$_why" ]; then
+    export LD_LIBRARY_PATH="$MESA_PATCH_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    export LIBGL_DRIVERS_PATH="$MESA_PATCH_DIR/dri:/usr/lib/dri"
+    MESA_PATCH_ON=1
+    echo "[launch] mesa-patch: 启用 $_pbase（自检通过）"
+  else
+    echo "[launch] 警告: mesa-patch 自检失败已自动停用: $_why"
+    echo "[launch]   修复: 把 /usr/lib/$_sbase 拷回 WSL 跑 mesa-binpatch.py + mesa-patch-install.sh"
+  fi
 else
   echo "[launch] mesa-patch: 未启用（$MESA_PATCH_DIR 不存在或 MESA_PATCH=0）"
 fi

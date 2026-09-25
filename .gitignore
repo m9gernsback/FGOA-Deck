@@ -18,3 +18,4 @@ deck-deploy/mariadb-*.tar.gz
 
 # ---- SEGA 专有二进制（版权，不进仓库；zlanapi 补丁可用补丁工具重做）----
 deck-deploy/win-amdaemon-kit/amdaemon.exe
+deck-deploy/libgallium-*[0-9].so

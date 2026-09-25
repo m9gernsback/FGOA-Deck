@@ -142,10 +142,13 @@ bash fgoa-server-stop.sh    # 停止
 ## 5. 常见问题
 
 **SteamOS 系统更新后游戏开始闪退？**
-系统更新可能换掉了 Mesa 图形库，补丁随之失效。重新执行
-`bash mesa-patch-install.sh`；若提示系统 Mesa 版本已变化，用
-`python3 mesa-binpatch.py /usr/lib/libgallium-<新版本>.so 输出.so`
-对新库重打补丁后再安装，或暂时用 `MESA_PATCH=0 bash fgoa-play.sh` 回退到安全模式。
+系统更新可能换掉了 Mesa 图形库，补丁随之失效——launch 脚本检测到版本不匹配会
+**自动停用补丁回退安全模式**（能玩但启动慢），不会硬加载错版库。根治：先把
+`/usr/lib/libgallium-<新版本>.so` 拷到能打补丁的机器，用
+`python3 mesa-binpatch.py libgallium-<新版本>.so libgallium-<新版本>-patched.so`
+重打（脚本按 md5 自动识别版本；md5 不在表内需先核对补丁点），拷回后
+`bash mesa-patch-install.sh` 安装（会自动识别系统版本并清理旧版残留）。
+套件自带 25.3.0 与 26.1.2 两版补丁，install 按当前系统自动选用。
 
 **改动了服务器数据/符号链接后不生效？**
 ARTEMiS 会把数据扫描结果缓存进内存（包括空结果）。改动后务必
@@ -185,5 +188,5 @@ ARTEMiS 会把数据扫描结果缓存进内存（包括空结果）。改动后
 | `ipcdump.dll` / `wlanapi.dll` | cngfix 载体：修复 soda runner bcrypt 缺 ECC 派生导致的 4102 死锁（永久必需） |
 | `fgoglcompat.dll` | FGO Prism 的 AMD GL 兼容补丁 v0.3.0（NV bindless→SSBO 翻译层，缺它画面缺失） |
 | `glshim.so` | GL shim：内嵌 embedded-struct 着色器改写（缺它 12 个着色器编译失败） |
-| `libgallium-25.3.0-patched.so` | 修复 Mesa 25.3.0 着色器磁盘缓存命中崩溃的补丁库 |
+| `libgallium-25.3.0-patched.so` / `libgallium-26.1.2-patched.so` | 修复 Mesa 着色器磁盘缓存命中崩溃的补丁库（install 按系统版本自动选用） |
 | `carddeck/` | 卡组编辑器（本地网页，端口 8931） |
